@@ -1,132 +1,147 @@
 CREATE PROCEDURE sp_GetTopTravelAgents (IN Destination VARCHAR(50), IN LaunchLocation VARCHAR(100), IN CommunicationMethod VARCHAR(20), IN LeadSource VARCHAR(20), IN TopN INT)
     READS SQL DATA
 BEGIN
-
-    -- Parameter Validation
+     -- Param Validation
     IF NOT EXISTS (SELECT 1 FROM bookings b WHERE b.Destination = Destination LIMIT 1) THEN
-        SIGNAL SQLSTATE '45000' 
-            SET MESSAGE_TEXT = 'Invalid Destination value';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Invalid Destination value';
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM bookings b WHERE b.LaunchLocation = LaunchLocation LIMIT 1) THEN
-        SIGNAL SQLSTATE '45000' 
-            SET MESSAGE_TEXT = 'Invalid LaunchLocation value';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Invalid LaunchLocation value';
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM assignment_history a WHERE a.CommunicationMethod = CommunicationMethod LIMIT 1) THEN
-        SIGNAL SQLSTATE '45000' 
-            SET MESSAGE_TEXT = 'Invalid CommunicationMethod value';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Invalid CommunicationMethod value';
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM assignment_history a WHERE a.LeadSource = LeadSource LIMIT 1) THEN
-        SIGNAL SQLSTATE '45000' 
-            SET MESSAGE_TEXT = 'Invalid LeadSource value';
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Invalid LeadSource value';
     END IF;
-    
-    -- Create temporary table to store scoring results
+
+    -- Drop and recreate scoring temp table
     DROP TEMPORARY TABLE IF EXISTS temp_final_scoring;
     CREATE TEMPORARY TABLE temp_final_scoring AS
-            WITH weights AS (
-                SELECT
-                    0.30 AS WeightCustomerRating,
-                    0.20 AS WeightSuccessRate,
-                    0.15 AS WeightCommunicationMethod,
-                    0.15 AS WeightLeadSource,
-                    0.10 AS WeightDestination,
-                    0.10 AS WeightLaunch
-            ),
-        
-            agent_success AS (
-                SELECT
-                    ah.AgentID,
-                    COUNT(*) AS TotalAssignments,
-                    SUM(CASE WHEN b.BookingStatus = 'Confirmed' THEN 1 ELSE 0 END) / COUNT(*) AS SuccessRate,
-                    SUM(CASE WHEN b.BookingStatus = 'Cancelled' THEN 1 ELSE 0 END) / COUNT(*) AS CancelRate
-                FROM assignment_history ah
-                LEFT JOIN bookings b ON ah.AssignmentID = b.AssignmentID
-                GROUP BY ah.AgentID
-            ),
-        
-            destination_match AS (
-                SELECT
-                    ah.AgentID,
-                    SUM(CASE WHEN b.Destination = Destination THEN 1 ELSE 0 END) / COUNT(*) AS DestinationMatchRatio
-                FROM assignment_history ah
-                JOIN bookings b ON ah.AssignmentID = b.AssignmentID
-                GROUP BY ah.AgentID
-            ),
-        
-            launch_match AS (
-                SELECT
-                    ah.AgentID,
-                    SUM(CASE WHEN b.LaunchLocation = LaunchLocation THEN 1 ELSE 0 END) / COUNT(*) AS LaunchMatchRatio
-                FROM assignment_history ah
-                JOIN bookings b ON ah.AssignmentID = b.AssignmentID
-                GROUP BY ah.AgentID
-            ),
-        
-            communication_method_match AS (
-                SELECT
-                    ah.AgentID,
-                    COUNT(*) / a.TotalAssignments AS CommunicationMatchRatio
-                FROM assignment_history ah
-                JOIN (
-                    SELECT AgentID, COUNT(*) AS TotalAssignments
-                    FROM assignment_history
-                    GROUP BY AgentID
-                ) a ON ah.AgentID = a.AgentID
-                WHERE ah.CommunicationMethod = CommunicationMethod
-                GROUP BY ah.AgentID, a.TotalAssignments
-            ),
-        
-            lead_source_match AS (   
-                SELECT
-                    ah.AgentID,
-                    COUNT(*) / a.TotalAssignments AS LeadSourceMatchRatio
-                FROM assignment_history ah
-                JOIN (
-                    SELECT AgentID, COUNT(*) AS TotalAssignments
-                    FROM assignment_history
-                    GROUP BY AgentID
-                ) a ON ah.AgentID = a.AgentID
-                WHERE ah.LeadSource = LeadSource
-                GROUP BY ah.AgentID, a.TotalAssignments
-            )
-        
+        WITH weights AS (
+            SELECT 0.30 AS WeightCustomerRating,
+                   0.20 AS WeightSuccessRate,
+                   0.15 AS WeightCommunicationMethod,
+                   0.15 AS WeightLeadSource,
+                   0.10 AS WeightDestination,
+                   0.10 AS WeightLaunch
+        ),
+        agent_success AS (
             SELECT
-                a.AgentID,
-                CONCAT(a.FirstName, ' ', a.LastName) AS AgentName,
-                a.JobTitle,
-                a.DepartmentName,
-                a.YearsOfService,
-                a.AverageCustomerServiceRating,
-                COALESCE(asr.SuccessRate, 0) AS SuccessRate,
-                COALESCE(asr.CancelRate, 0) AS CancelRate,
-                COALESCE(cm.CommunicationMatchRatio, 0) AS CommunicationMatchRatio,
-                COALESCE(ls.LeadSourceMatchRatio, 0)     AS LeadSourceMatchRatio,
-                COALESCE(dm.DestinationMatchRatio, 0)    AS DestinationMatchRatio,
-                COALESCE(lm.LaunchMatchRatio, 0)         AS LaunchMatchRatio,
-                CAST(
-                    w.WeightCustomerRating * a.AverageCustomerServiceRating +
-                    w.WeightSuccessRate * COALESCE(asr.SuccessRate, 0) +
-                    w.WeightCommunicationMethod * COALESCE(cm.CommunicationMatchRatio, 0) +
-                    w.WeightLeadSource * COALESCE(ls.LeadSourceMatchRatio, 0) +
-                    w.WeightDestination * COALESCE(dm.DestinationMatchRatio, 0) +
-                    w.WeightLaunch * COALESCE(lm.LaunchMatchRatio, 0)
-                AS DECIMAL(20,4)) AS Score
-            FROM space_travel_agents a
-            LEFT JOIN agent_success asr             ON a.AgentID = asr.AgentID
-            LEFT JOIN destination_match dm          ON a.AgentID = dm.AgentID
-            LEFT JOIN launch_match lm               ON a.AgentID = lm.AgentID
-            LEFT JOIN communication_method_match cm ON a.AgentID = cm.AgentID
-            LEFT JOIN lead_source_match ls          ON a.AgentID = ls.AgentID
-            CROSS JOIN weights w;
+                ah.AgentID,
+                COUNT(*) AS TotalAssignments,
+                SUM(CASE WHEN b.BookingStatus = 'Confirmed' THEN 1 ELSE 0 END) / COUNT(*) AS SuccessRate,
+                SUM(CASE WHEN b.BookingStatus = 'Cancelled' THEN 1 ELSE 0 END) / COUNT(*) AS CancelRate
+            FROM assignment_history ah
+            LEFT JOIN bookings b ON ah.AssignmentID = b.AssignmentID
+            GROUP BY ah.AgentID
+        ),
+        destination_match AS (
+            SELECT
+                ah.AgentID,
+                SUM(CASE WHEN b.Destination = Destination THEN 1 ELSE 0 END) / COUNT(*) AS DestinationMatchRatio
+            FROM assignment_history ah
+            JOIN bookings b ON ah.AssignmentID = b.AssignmentID
+            GROUP BY ah.AgentID
+        ),
+        launch_match AS (
+            SELECT
+                ah.AgentID,
+                SUM(CASE WHEN b.LaunchLocation = LaunchLocation THEN 1 ELSE 0 END) / COUNT(*) AS LaunchMatchRatio
+            FROM assignment_history ah
+            JOIN bookings b ON ah.AssignmentID = b.AssignmentID
+            GROUP BY ah.AgentID
+        ),
+        communication_method_match AS (
+            SELECT
+                ah.AgentID,
+                COUNT(*) / a.TotalAssignments AS CommunicationMatchRatio
+            FROM assignment_history ah
+            JOIN (
+                SELECT AgentID, COUNT(*) AS TotalAssignments
+                FROM assignment_history
+                GROUP BY AgentID
+            ) a ON ah.AgentID = a.AgentID
+            WHERE ah.CommunicationMethod = CommunicationMethod
+            GROUP BY ah.AgentID, a.TotalAssignments
+        ),
+        lead_source_match AS (   
+            SELECT
+                ah.AgentID,
+                COUNT(*) / a.TotalAssignments AS LeadSourceMatchRatio
+            FROM assignment_history ah
+            JOIN (
+                SELECT AgentID, COUNT(*) AS TotalAssignments
+                FROM assignment_history
+                GROUP BY AgentID
+            ) a ON ah.AgentID = a.AgentID
+            WHERE ah.LeadSource = LeadSource
+            GROUP BY ah.AgentID, a.TotalAssignments
+        )
+        SELECT
+            a.AgentID,
+            CONCAT(a.FirstName, ' ', a.LastName) AS AgentName,
+            a.JobTitle,
+            a.DepartmentName,
+            a.YearsOfService,
+            a.AverageCustomerServiceRating,
+            COALESCE(asr.SuccessRate, 0) AS SuccessRate,
+            COALESCE(asr.CancelRate, 0) AS CancelRate,
+            COALESCE(cm.CommunicationMatchRatio, 0) AS CommunicationMatchRatio,
+            COALESCE(ls.LeadSourceMatchRatio, 0)     AS LeadSourceMatchRatio,
+            COALESCE(dm.DestinationMatchRatio, 0)    AS DestinationMatchRatio,
+            COALESCE(lm.LaunchMatchRatio, 0)         AS LaunchMatchRatio,
+            CAST(
+                w.WeightCustomerRating * a.AverageCustomerServiceRating +
+                w.WeightSuccessRate * COALESCE(asr.SuccessRate, 0) +
+                w.WeightCommunicationMethod * COALESCE(cm.CommunicationMatchRatio, 0) +
+                w.WeightLeadSource * COALESCE(ls.LeadSourceMatchRatio, 0) +
+                w.WeightDestination * COALESCE(dm.DestinationMatchRatio, 0) +
+                w.WeightLaunch * COALESCE(lm.LaunchMatchRatio, 0)
+            AS DECIMAL(20,4)) AS Score
+        FROM space_travel_agents a
+        LEFT JOIN agent_success asr             ON a.AgentID = asr.AgentID
+        LEFT JOIN destination_match dm          ON a.AgentID = dm.AgentID
+        LEFT JOIN launch_match lm               ON a.AgentID = lm.AgentID
+        LEFT JOIN communication_method_match cm ON a.AgentID = cm.AgentID
+        LEFT JOIN lead_source_match ls          ON a.AgentID = ls.AgentID
+        CROSS JOIN weights w;
 
-    -- Return results with or without limit
+    -- Return ranked results with or without limit
     IF TopN IS NULL THEN
-        SELECT * FROM temp_final_scoring ORDER BY Score DESC;
+        SELECT 
+            RANK() OVER (ORDER BY Score DESC) AS AgentRank,
+            AgentID,
+            AgentName,
+            JobTitle,
+            DepartmentName,
+            YearsOfService,
+            AverageCustomerServiceRating,
+            SuccessRate,
+            CancelRate,
+            CommunicationMatchRatio,
+            LeadSourceMatchRatio,
+            DestinationMatchRatio,
+            LaunchMatchRatio,
+            Score
+        FROM temp_final_scoring
+        ORDER BY Score DESC;
     ELSE
-        SET @sql = CONCAT('SELECT * FROM temp_final_scoring ORDER BY Score DESC LIMIT ', TopN);
+        SET @sql = CONCAT(
+            'SELECT * FROM (',
+                'SELECT ',
+                    'RANK() OVER (ORDER BY Score DESC) AS AgentRank, ',
+                    'AgentID, AgentName, JobTitle, DepartmentName, YearsOfService, ',
+                    'AverageCustomerServiceRating, SuccessRate, CancelRate, ',
+                    'CommunicationMatchRatio, LeadSourceMatchRatio, DestinationMatchRatio, ',
+                    'LaunchMatchRatio, Score ',
+                'FROM temp_final_scoring',
+            ') ranked ',
+            'ORDER BY Score DESC LIMIT ', TopN
+        );
         PREPARE stmt FROM @sql;
         EXECUTE stmt;
         DEALLOCATE PREPARE stmt;
