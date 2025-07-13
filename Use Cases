@@ -1,0 +1,24 @@
+CALL sp_GetTopTravelAgents(
+    'Mars',                                  -- @Destination
+    'Dallas-Fort Worth Launch Complex',      -- @LaunchLocation
+    'Phone Call',                            -- @CommunicationMethod
+    'Organic',                               -- @LeadSource
+    NULL                                     -- @TopN (NULL = return all)
+);
+
+CALL sp_GetTopTravelAgents(
+    'Mars',
+    'Dallas-Fort Worth Launch Complex',
+    'Phone Call',
+    'Organic',
+    5                                        -- @TopN = return top 5 agents
+);
+
+-- If validation is important. The Stored Proc requires the inputs to exist in the tables.
+CALL sp_GetTopTravelAgents(
+    'PlanetX',                               -- Destination that does not exist.
+    'Dallas-Fort Worth Launch Complex',  
+    'Phone Call',                         
+    'Organic',                           
+    NULL                                     
+);
