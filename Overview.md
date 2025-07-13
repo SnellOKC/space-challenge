@@ -1,4 +1,4 @@
-# 🛰️ Agent Assignment Model: Overview & Approach
+# Agent Assignment Model: Overview & Approach
 
 **Objective:**  
 Automatically assign incoming space travel leads to the most qualified travel agents, optimizing for customer experience, conversion likelihood, and efficiency.
@@ -43,7 +43,7 @@ Score =
 
 ---
 
-## ⚙Implementation Details
+## Implementation Details
 
 - The model is implemented as a **MySQL stored procedure**.
 - It accepts the customer’s lead data as input and returns a **ranked list of matching agents**.
